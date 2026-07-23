@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enterprise Hybrid GraphRAG</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
+        .header { background: #1e293b; border-bottom: 1px solid #334155; padding: 20px 40px; text-align: center; }
+        .header h1 { font-size: 26px; color: #f8fafc; }
+        .header p { color: #94a3b8; margin-top: 6px; font-size: 14px; }
+        .container { max-width: 900px; margin: 30px auto; padding: 0 20px; }
+        .tabs { display: flex; gap: 0; margin-bottom: 24px; }
+        .tab { padding: 10px 24px; background: #1e293b; border: 1px solid #334155; cursor: pointer; font-size: 14px; color: #94a3b8; }
+        .tab:first-child { border-radius: 8px 0 0 8px; }
+        .tab:last-child { border-radius: 0 8px 8px 0; }
+        .tab.active { background: #3b82f6; color: white; border-color: #3b82f6; }
+        .panel { display: none; background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 24px; }
+        .panel.active { display: block; }
+        .upload-zone { border: 2px dashed #475569; border-radius: 12px; padding: 40px; text-align: center; cursor: pointer; transition: all 0.3s; }
+        .upload-zone:hover { border-color: #60a5fa; background: #1e3a5f; }
+        textarea, input[type="text"] {
+            width: 100%; padding: 12px; background: #0f172a; border: 1px solid #334155;
+            border-radius: 8px; color: #e2e8f0; font-size: 14px; font-family: inherit; resize: vertical;
+        }
+        textarea:focus, input:focus { outline: none; border-color: #3b82f6; }
+        .btn {
+            background: #3b82f6; color: white; border: none; padding: 10px 24px;
+            border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; margin-top: 12px;
+        }
+        .btn:hover { background: #2563eb; }
+        .btn:disabled { background: #475569; cursor: not-allowed; }
+        .result { margin-top: 20px; background: #0f172a; border: 1px solid #334155; border-radius: 10px; padding: 20px; display: none; }
+        .result.show { display: block; }
+        .meta { font-size: 13px; color: #64748b; margin-bottom: 12px; }
+        .answer { line-height: 1.7; font-size: 15px; }
+        .spinner { display: none; text-align: center; color: #94a3b8; padding: 20px; }
+        .spinner.show { display: block; animation: pulse 1.5s infinite; }
+        @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+        .doc-list { list-style: none; }
+        .doc-list li { padding: 10px 0; border-bottom: 1px solid #334155; font-size: 14px; }
+        .badge { display: inline-block; background: #1e3a5f; color: #60a5fa; padding: 2px 8px; border-radius: 4px; font-size: 12px; margin-left: 8px; }
+        label { display: block; font-size: 13px; color: #94a3b8; margin-bottom: 4px; }
+        .form-row { display: flex; gap: 12px; margin-bottom: 12px; }
+        .form-row > div { flex: 1; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Enterprise Hybrid GraphRAG</h1>
+        <p>Vector search + BM25 + Neo4j knowledge graph — ask questions grounded in your documents</p>
+    </div>
+
+    <div class="container">
+        <div class="tabs">
+            <div class="tab active" onclick="switchTab('upload')">Upload</div>
+            <div class="tab" onclick="switchTab('query')">Query</div>
+            <div class="tab" onclick="switchTab('docs')">Documents</div>
+        </div>
+
+        <div id="upload" class="panel active">
+            <div class="upload-zone" onclick="document.getElementById('fileInput').click()">
+                <p>Drop a PDF here or click to browse</p>
+                <input type="file" id="fileInput" accept=".pdf" style="display:none" onchange="handleUpload(this)">
+            </div>
+            <div id="uploadResult" style="margin-top:16px"></div>
+        </div>
+
+        <div id="query" class="panel">
+            <div class="form-row">
+                <div>
+                    <label>Question</label>
+                    <textarea id="question" rows="3" placeholder="What is this document about?"></textarea>
+                </div>
+            </div>
+            <div class="form-row">
+                <div>
+                    <label>Session ID</label>
+                    <input type="text" id="sessionId" value="default">
+                </div>
+                <div>
+                    <label>Top K</label>
+                    <input type="text" id="topK" value="5">
+                </div>
+            </div>
+            <label><input type="checkbox" id="useGraph" checked> Use knowledge graph</label>
+            <button class="btn" onclick="runQuery()">Ask</button>
+            <div class="spinner" id="querySpinner">Searching across vector, BM25, and graph...</div>
+            <div class="result" id="queryResult">
+                <div class="meta" id="queryMeta"></div>
+                <div class="answer" id="queryAnswer"></div>
+            </div>
+        </div>
+
+        <div id="docs" class="panel">
+            <button class="btn" onclick="loadDocs()">Refresh</button>
+            <ul class="doc-list" id="docList" style="margin-top:16px"></ul>
+        </div>
+    </div>
+
+    <script>
+        function switchTab(id) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+            document.getElementById(id).classList.add('active');
+            event.target.classList.add('active');
+        }
+
+        async function handleUpload(input) {
+            if (!input.files.length) return;
+            const file = input.files[0];
+            const form = new FormData();
+            form.append('file', file);
+            const el = document.getElementById('uploadResult');
+            el.innerHTML = '<div class="spinner show">Ingesting PDF...</div>';
+            try {
+                const res = await fetch('/upload', { method: 'POST', body: form });
+                const data = await res.json();
+                if (res.ok) {
+                    el.innerHTML = '<div style="color:#22c55e;margin-top:8px">' + data.message + ' — ' + data.chunks_inserted + ' chunks, ' + data.entities_extracted + ' entities, ' + data.relationships_found + ' relationships</div>';
+                } else {
+                    el.innerHTML = '<div style="color:#ef4444;margin-top:8px">' + (data.detail || 'Upload failed') + '</div>';
+                }
+            } catch(e) {
+                el.innerHTML = '<div style="color:#ef4444;margin-top:8px">Error: ' + e.message + '</div>';
+            }
+        }
+
+        async function runQuery() {
+            const q = document.getElementById('question').value.trim();
+            if (!q) return;
+            const spinner = document.getElementById('querySpinner');
+            const result = document.getElementById('queryResult');
+            spinner.classList.add('show');
+            result.classList.remove('show');
+            try {
+                const res = await fetch('/query', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        question: q,
+                        top_k: parseInt(document.getElementById('topK').value),
+                        session_id: document.getElementById('sessionId').value,
+                        use_graph: document.getElementById('useGraph').checked
+                    })
+                });
+                const data = await res.json();
+                spinner.classList.remove('show');
+                result.classList.add('show');
+                document.getElementById('queryMeta').innerHTML =
+                    'Retrieval: <strong>' + data.retrieval_type + '</strong> | Chunks: ' + data.chunks_used +
+                    (data.sources.length ? ' | Sources: ' + data.sources.join(', ') : '');
+                document.getElementById('queryAnswer').innerHTML = data.answer.replace(/\n/g, '<br>');
+            } catch(e) {
+                spinner.classList.remove('show');
+                result.classList.add('show');
+                document.getElementById('queryAnswer').innerHTML = '<span style="color:#ef4444">Error: ' + e.message + '</span>';
+            }
+        }
+
+        async function loadDocs() {
+            const list = document.getElementById('docList');
+            try {
+                const res = await fetch('/documents');
+                const docs = await res.json();
+                if (!docs.length) { list.innerHTML = '<li>No documents uploaded yet</li>'; return; }
+                list.innerHTML = docs.map(d =>
+                    '<li><strong>' + d.filename + '</strong><span class="badge">' + d.chunks + ' chunks</span><span class="badge">' + d.entities + ' entities</span></li>'
+                ).join('');
+            } catch(e) {
+                list.innerHTML = '<li style="color:#ef4444">Error loading documents</li>';
+            }
+        }
+    </script>
+</body>
+</html>

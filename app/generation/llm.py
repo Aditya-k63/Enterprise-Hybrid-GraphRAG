@@ -1,0 +1,60 @@
+import logging
+from groq import Groq
+from app.config import settings
+
+logger = logging.getLogger(__name__)
+
+_client = None
+
+
+def get_groq() -> Groq:
+    global _client
+    if _client is None:
+        _client = Groq(api_key=settings.GROQ_API_KEY)
+    return _client
+
+
+SYSTEM_PROMPT = """You are a helpful assistant that answers questions based on the provided context.
+Rules:
+- Answer ONLY using the information in the context below.
+- Be specific and detailed. Include entity names, dates, and relationships when available.
+- If the context is partially relevant, share what you know and flag what's missing.
+- If the answer is completely absent, say: "I don't have enough information to answer that."
+- Never make up facts not present in the context.
+- When citing sources, reference the document name if available."""
+
+
+def generate_answer(query: str, chunks: list[dict], conversation_history: list[dict] = None) -> str:
+    client = get_groq()
+
+    context_parts = []
+    for i, chunk in enumerate(chunks, 1):
+        source = ""
+        if isinstance(chunk.get("meta"), dict):
+            source = f" [{chunk['meta'].get('source', '')}]"
+        context_parts.append(f"[{i}]{source}\n{chunk['content']}")
+
+    context = "\n\n".join(context_parts)
+
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+
+    if conversation_history:
+        for msg in conversation_history[-6:]:
+            messages.append({"role": msg["role"], "content": msg["content"]})
+
+    messages.append({
+        "role": "user",
+        "content": f"Context:\n{context}\n\nQuestion: {query}\n\nAnswer:",
+    })
+
+    try:
+        response = client.chat.completions.create(
+            model=settings.LLM_MODEL,
+            messages=messages,
+            temperature=0.2,
+            max_tokens=1024,
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        logger.error(f"LLM generation failed: {e}")
+        return "Failed to generate answer. Please try again."
