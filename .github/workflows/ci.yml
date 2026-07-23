@@ -19,17 +19,8 @@ jobs:
       - name: Run tests
         run: python -m pytest tests/ -v
 
-  docker-build:
-    needs: build-check
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    steps:
-      - uses: actions/checkout@v4
-      - name: Build Docker image
-        run: docker build -t graphrag:${{ github.sha }} .
-
   docker-push:
-    needs: docker-build
+    needs: build-check
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
