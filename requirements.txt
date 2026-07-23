@@ -15,4 +15,3 @@ numpy>=1.24.0
 sentencepiece>=0.1.99
 neo4j>=5.14.0
 pydantic-settings>=2.1.0
-cross-encoder>=0.0.3
