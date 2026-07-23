@@ -5,8 +5,9 @@ from fastapi.testclient import TestClient
 
 @pytest.fixture
 def client():
-    from app.main import app
-    return TestClient(app)
+    with patch("app.auth.verify_api_key", return_value="test-key"):
+        from app.main import app
+        yield TestClient(app)
 
 
 def test_root(client):
@@ -32,8 +33,10 @@ def test_upload_rejects_non_pdf(client):
     assert res.status_code == 400
 
 
-def test_query_requires_auth(client):
-    res = client.post("/query", json={"question": "test"})
+def test_query_requires_auth():
+    from app.main import app
+    c = TestClient(app)
+    res = c.post("/query", json={"question": "test"})
     assert res.status_code == 401
 
 
