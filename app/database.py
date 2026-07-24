@@ -1,19 +1,19 @@
 import logging
-from psycopg2 import pool
-from pgvector.psycopg2 import register_vector
-from app.config import settings
 
 logger = logging.getLogger(__name__)
 
 _connection_pool = None
 
 
-def get_pool() -> pool.ThreadedConnectionPool:
+def get_pool():
     global _connection_pool
     if _connection_pool is None:
+        from psycopg2 import pool
+        from pgvector.psycopg2 import register_vector
+        from app.config import settings
         _connection_pool = pool.ThreadedConnectionPool(
             minconn=2,
-            maxconn=10,
+            maxconn=5,
             dbname=settings.DB_NAME,
             user=settings.DB_USER,
             password=settings.DB_PASSWORD,
@@ -25,6 +25,7 @@ def get_pool() -> pool.ThreadedConnectionPool:
 
 
 def get_connection():
+    from pgvector.psycopg2 import register_vector
     conn = get_pool().getconn()
     register_vector(conn)
     return conn

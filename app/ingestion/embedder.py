@@ -1,15 +1,15 @@
 import logging
-from sentence_transformers import SentenceTransformer
-from app.config import settings
 
 logger = logging.getLogger(__name__)
 
 _model = None
 
 
-def get_embedder() -> SentenceTransformer:
+def get_embedder():
     global _model
     if _model is None:
+        from sentence_transformers import SentenceTransformer
+        from app.config import settings
         _model = SentenceTransformer(settings.EMBEDDING_MODEL)
         logger.info(f"Loaded embedding model: {settings.EMBEDDING_MODEL}")
     return _model

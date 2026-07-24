@@ -1,6 +1,5 @@
 import logging
 import numpy as np
-from app.ingestion.embedder import get_embedder
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +18,7 @@ def compute_faithfulness(answer: str, chunks: list[str]) -> float:
     if any(phrase in answer.lower() for phrase in no_info):
         return 1.0
 
+    from app.ingestion.embedder import get_embedder
     model = get_embedder()
     answer_emb = model.encode(answer)
     context = " ".join(chunks)
@@ -27,6 +27,7 @@ def compute_faithfulness(answer: str, chunks: list[str]) -> float:
 
 
 def compute_answer_relevance(question: str, answer: str) -> float:
+    from app.ingestion.embedder import get_embedder
     model = get_embedder()
     q_emb = model.encode(question)
     a_emb = model.encode(answer)
@@ -36,6 +37,7 @@ def compute_answer_relevance(question: str, answer: str) -> float:
 def compute_context_precision(question: str, chunks: list[str], threshold: float = 0.3) -> float:
     if not chunks:
         return 0.0
+    from app.ingestion.embedder import get_embedder
     model = get_embedder()
     q_emb = model.encode(question)
     chunk_embs = model.encode(chunks)

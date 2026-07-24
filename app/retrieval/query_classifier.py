@@ -1,18 +1,13 @@
 import logging
 import json
-from groq import Groq
-from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-_client = None
 
-
-def get_groq() -> Groq:
-    global _client
-    if _client is None:
-        _client = Groq(api_key=settings.GROQ_API_KEY)
-    return _client
+def get_groq():
+    from groq import Groq
+    from app.config import settings
+    return Groq(api_key=settings.GROQ_API_KEY)
 
 
 CLASSIFY_PROMPT = """Classify the following question into one of these retrieval types:
@@ -27,9 +22,9 @@ Question: {query}"""
 
 
 def classify_query(query: str) -> dict:
-    client = get_groq()
-
     try:
+        from app.config import settings
+        client = get_groq()
         response = client.chat.completions.create(
             model=settings.LLM_MODEL,
             messages=[{

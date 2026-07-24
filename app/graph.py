@@ -1,6 +1,4 @@
 import logging
-from neo4j import GraphDatabase
-from app.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -10,6 +8,8 @@ _driver = None
 def get_driver():
     global _driver
     if _driver is None:
+        from neo4j import GraphDatabase
+        from app.config import settings
         _driver = GraphDatabase.driver(
             settings.NEO4J_URI,
             auth=(settings.NEO4J_USER, settings.NEO4J_PASSWORD),

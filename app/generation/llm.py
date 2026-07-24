@@ -1,17 +1,13 @@
 import logging
-from groq import Groq
-from app.config import settings
+import json
 
 logger = logging.getLogger(__name__)
 
-_client = None
 
-
-def get_groq() -> Groq:
-    global _client
-    if _client is None:
-        _client = Groq(api_key=settings.GROQ_API_KEY)
-    return _client
+def get_groq():
+    from groq import Groq
+    from app.config import settings
+    return Groq(api_key=settings.GROQ_API_KEY)
 
 
 SYSTEM_PROMPT = """You are a helpful assistant that answers questions based on the provided context.
@@ -48,6 +44,7 @@ def generate_answer(query: str, chunks: list[dict], conversation_history: list[d
     })
 
     try:
+        from app.config import settings
         response = client.chat.completions.create(
             model=settings.LLM_MODEL,
             messages=messages,

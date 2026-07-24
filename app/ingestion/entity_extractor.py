@@ -1,18 +1,13 @@
 import logging
 import json
 from groq import Groq
-from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-_client = None
 
-
-def get_groq() -> Groq:
-    global _client
-    if _client is None:
-        _client = Groq(api_key=settings.GROQ_API_KEY)
-    return _client
+def get_groq():
+    from app.config import settings
+    return Groq(api_key=settings.GROQ_API_KEY)
 
 
 ENTITY_PROMPT = """Extract all named entities from the following text. For each entity, provide:
@@ -36,6 +31,7 @@ Text:
 
 
 def extract_entities(text: str) -> dict:
+    from app.config import settings
     client = get_groq()
 
     truncated = text[:3000] if len(text) > 3000 else text
@@ -80,6 +76,7 @@ def extract_entities(text: str) -> dict:
 
 
 def extract_query_entities(query: str) -> list[str]:
+    from app.config import settings
     client = get_groq()
 
     prompt = f"""Extract the key named entities from this question. Return ONLY a JSON array of entity names.
