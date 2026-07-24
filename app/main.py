@@ -2,6 +2,7 @@ import os
 import json
 import time
 import logging
+import threading
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Depends, Request
@@ -41,9 +42,7 @@ logger = logging.getLogger(__name__)
 query_cache = {}
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    logger.info("Starting Enterprise Hybrid GraphRAG...")
+def _init_background():
     try:
         init_db()
     except Exception as e:
@@ -52,6 +51,12 @@ async def lifespan(app: FastAPI):
         init_graph()
     except Exception as e:
         logger.error(f"Neo4j init failed (graph features disabled): {e}")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    logger.info("Starting Enterprise Hybrid GraphRAG...")
+    threading.Thread(target=_init_background, daemon=True).start()
     yield
     logger.info("Shutting down")
 
