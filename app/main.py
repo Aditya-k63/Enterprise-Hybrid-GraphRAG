@@ -59,8 +59,11 @@ async def lifespan(app: FastAPI):
     try:
         init_db()
     except Exception as e:
-        logger.error(f"DB pool init failed: {e}")
-    threading.Thread(target=_init_background, daemon=True).start()
+        logger.error(f"DB pool init failed (app will run without DB): {e}")
+    try:
+        init_graph()
+    except Exception as e:
+        logger.error(f"Neo4j init failed (graph features disabled): {e}")
     yield
     logger.info("Shutting down")
 
@@ -206,27 +209,31 @@ def root():
     return HTMLResponse(content="<h1>Enterprise Hybrid GraphRAG</h1><p><a href='/docs'>API Docs</a></p>")
 
 
-@app.get("/health", response_model=HealthResponse)
+@app.get("/health")
 def health():
-    pg_status = "connected"
-    neo4j_status = "connected"
+    pg_status = "disconnected"
+    neo4j_status = "disconnected"
     try:
         conn = get_connection()
         conn.cursor().execute("SELECT 1")
         release_connection(conn)
+        pg_status = "connected"
     except Exception:
-        pg_status = "disconnected"
+        pass
     try:
         from app.graph import get_driver
-        get_driver().verify_connectivity()
+        d = get_driver()
+        if d:
+            d.verify_connectivity()
+            neo4j_status = "connected"
     except Exception:
-        neo4j_status = "disconnected"
-    return HealthResponse(
-        status="healthy" if pg_status == "connected" else "degraded",
-        postgres=pg_status,
-        neo4j=neo4j_status,
-        cache_size=len(query_cache),
-    )
+        pass
+    return {
+        "status": "healthy" if pg_status == "connected" else "degraded",
+        "postgres": pg_status,
+        "neo4j": neo4j_status,
+        "cache_size": len(query_cache),
+    }
 
 
 @app.get("/documents", response_model=list[DocumentInfo], dependencies=[Depends(verify_api_key)])
