@@ -3,6 +3,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 _connection_pool = None
+_initialized = False
 
 
 def _get_conn_kwargs():
@@ -42,6 +43,9 @@ def release_connection(conn):
 
 
 def init_db():
+    global _initialized
+    if _initialized:
+        return
     conn = get_connection()
     try:
         cur = conn.cursor()
@@ -95,6 +99,7 @@ def init_db():
             conn.rollback()
         conn.commit()
         cur.close()
+        _initialized = True
         logger.info("PostgreSQL tables initialized")
     finally:
         release_connection(conn)

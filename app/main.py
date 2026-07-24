@@ -56,6 +56,10 @@ def _init_background():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting Enterprise Hybrid GraphRAG...")
+    try:
+        init_db()
+    except Exception as e:
+        logger.error(f"DB pool init failed: {e}")
     threading.Thread(target=_init_background, daemon=True).start()
     yield
     logger.info("Shutting down")
