@@ -1,11 +1,12 @@
 import logging
-from app.database import get_connection, release_connection
-from app.ingestion.embedder import embed_query
 
 logger = logging.getLogger(__name__)
 
 
 def vector_search(query: str, top_k: int = 10) -> list[dict]:
+    from app.database import get_connection, release_connection
+    from app.ingestion.embedder import embed_query
+
     query_embedding = embed_query(query)
     conn = get_connection()
     try:

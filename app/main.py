@@ -2,35 +2,13 @@ import os
 import json
 import time
 import logging
-import threading
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Depends, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-
-from app.config import settings
-from app.database import get_connection, release_connection, init_db
-from app.graph import init_graph, store_entities, get_document_entities, delete_document_graph
-from app.auth import verify_api_key, rate_limiter
-from app.models import (
-    QueryRequest, QueryResponse, UploadResponse,
-    EvaluatedQueryResponse, DocumentInfo, HealthResponse,
-)
-from app.ingestion.pdf_parser import extract_text_from_pdf
-from app.ingestion.chunker import chunk_text
-from app.ingestion.embedder import embed_chunks, embed_query
-from app.ingestion.entity_extractor import extract_entities
-from app.retrieval.vector_search import vector_search
-from app.retrieval.bm25_search import bm25_search
-from app.retrieval.graph_search import graph_retrieve
-from app.retrieval.hybrid import reciprocal_rank_fusion
-from app.retrieval.reranker import rerank
-from app.retrieval.query_classifier import classify_query
-from app.generation.llm import generate_answer
-from app.memory.conversation import memory
-from app.evaluation.ragas import evaluate
 
 logging.basicConfig(
     level=logging.INFO,
@@ -39,31 +17,30 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
+class QueryRequest(BaseModel):
+    question: str
+    top_k: int = 5
+    session_id: str | None = None
+    use_graph: bool = True
+
+STATIC_DIR = Path(__file__).parent.parent / "static"
 query_cache = {}
 
 
-def _init_background():
-    try:
-        init_db()
-    except Exception as e:
-        logger.error(f"PostgreSQL init failed: {e}")
-    try:
-        init_graph()
-    except Exception as e:
-        logger.error(f"Neo4j init failed (graph features disabled): {e}")
-
-
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app):
     logger.info("Starting Enterprise Hybrid GraphRAG...")
     try:
+        from app.database import init_db
         init_db()
     except Exception as e:
-        logger.error(f"DB pool init failed (app will run without DB): {e}")
+        logger.warning(f"DB init skipped: {e}")
     try:
+        from app.graph import init_graph
         init_graph()
     except Exception as e:
-        logger.error(f"Neo4j init failed (graph features disabled): {e}")
+        logger.warning(f"Neo4j init skipped: {e}")
     yield
     logger.info("Shutting down")
 
@@ -85,11 +62,12 @@ app.add_middleware(
 
 @app.middleware("http")
 async def rate_limit_middleware(request: Request, call_next):
-    client_ip = request.client.host if request.client else "unknown"
+    from app.auth import rate_limiter
     if request.url.path in ("/health", "/docs", "/openapi.json"):
         return await call_next(request)
+    client_ip = request.client.host if request.client else "unknown"
     if not rate_limiter.is_allowed(client_ip):
-        raise HTTPException(status_code=429, detail="Rate limit exceeded. Try again later.")
+        return JSONResponse(status_code=429, content={"detail": "Rate limit exceeded. Try again later."})
     response = await call_next(request)
     response.headers["X-RateLimit-Remaining"] = str(rate_limiter.remaining(client_ip))
     return response
@@ -104,140 +82,49 @@ async def logging_middleware(request: Request, call_next):
     return response
 
 
-def validate_file(file: UploadFile, content: bytes):
-    if not file.filename.endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Only PDF files allowed")
-    if len(content) > settings.MAX_FILE_SIZE:
-        raise HTTPException(status_code=400, detail=f"File too large. Max {settings.MAX_FILE_SIZE // 1024 // 1024}MB")
-    if len(content) == 0:
-        raise HTTPException(status_code=400, detail="Empty file")
-
-
-def insert_chunks(chunks: list[str], embeddings: list[list[float]], filename: str) -> int:
-    conn = get_connection()
-    inserted = 0
-    try:
-        cur = conn.cursor()
-        for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
-            metadata = {"source": filename, "chunk_index": i}
-            cur.execute(
-                "INSERT INTO document_sections (content, meta, embedding) VALUES (%s, %s, %s)",
-                (chunk, json.dumps(metadata), embedding),
-            )
-            inserted += 1
-        conn.commit()
-        cur.close()
-        return inserted
-    except Exception as e:
-        conn.rollback()
-        raise e
-    finally:
-        release_connection(conn)
-
-
-def log_search_analytics(question: str, retrieval_type: str, chunks_used: int, latency_ms: float):
-    conn = get_connection()
-    try:
-        cur = conn.cursor()
-        cur.execute(
-            "INSERT INTO search_analytics (question, retrieval_type, chunks_used, latency_ms) VALUES (%s, %s, %s, %s)",
-            (question, retrieval_type, chunks_used, latency_ms),
-        )
-        conn.commit()
-        cur.close()
-    except Exception:
-        conn.rollback()
-    finally:
-        release_connection(conn)
-
-
-def log_evaluation(question: str, answer: str, metrics: dict):
-    conn = get_connection()
-    try:
-        cur = conn.cursor()
-        cur.execute(
-            """INSERT INTO rag_evaluations
-            (question, answer, faithfulness, answer_relevance, context_precision, overall_score)
-            VALUES (%s, %s, %s, %s, %s, %s)""",
-            (question, answer, metrics["faithfulness"], metrics["answer_relevance"],
-             metrics["context_precision"], metrics["overall_score"]),
-        )
-        conn.commit()
-        cur.close()
-    except Exception:
-        conn.rollback()
-    finally:
-        release_connection(conn)
-
-
-def retrieve(query: str, top_k: int = 5, use_graph: bool = True) -> tuple[list[dict], str]:
-    classification = classify_query(query)
-    retrieval_type = classification["type"]
-    logger.info(f"Query classified as: {retrieval_type} ({classification['reason']})")
-
-    all_results = []
-
-    if retrieval_type in ("vector", "hybrid"):
-        vec_results = vector_search(query, top_k=settings.VECTOR_TOP_K)
-        all_results.append(vec_results)
-
-    if retrieval_type in ("vector", "hybrid", "graph"):
-        bm25_results = bm25_search(query, top_k=settings.BM25_TOP_K)
-        all_results.append(bm25_results)
-
-    if use_graph and retrieval_type in ("graph", "hybrid"):
-        graph_results = graph_retrieve(query)
-        if graph_results:
-            all_results.append(graph_results)
-
-    if not all_results:
-        vec_results = vector_search(query, top_k=top_k)
-        all_results.append(vec_results)
-
-    fused = reciprocal_rank_fusion(all_results, k=settings.RRF_K)
-    reranked = rerank(query, fused[:20], top_k=top_k)
-
-    return reranked, retrieval_type
-
-
-@app.get("/", response_class=HTMLResponse)
+@app.get("/")
 def root():
-    index_path = os.path.join(os.path.dirname(__file__), "..", "static", "index.html")
-    if os.path.exists(index_path):
-        with open(index_path, "r") as f:
-            return HTMLResponse(content=f.read())
+    index_path = STATIC_DIR / "index.html"
+    try:
+        if index_path.exists():
+            return HTMLResponse(content=index_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        logger.warning(f"Failed to read index.html: {e}")
     return HTMLResponse(content="<h1>Enterprise Hybrid GraphRAG</h1><p><a href='/docs'>API Docs</a></p>")
 
 
 @app.get("/health")
 def health():
-    pg_status = "disconnected"
-    neo4j_status = "disconnected"
-    try:
-        conn = get_connection()
-        conn.cursor().execute("SELECT 1")
-        release_connection(conn)
-        pg_status = "connected"
-    except Exception:
-        pass
+    from app.database import db_available
+    pg_ok = db_available()
+    neo4j_ok = False
     try:
         from app.graph import get_driver
         d = get_driver()
         if d:
             d.verify_connectivity()
-            neo4j_status = "connected"
+            neo4j_ok = True
     except Exception:
         pass
+    status = "healthy" if pg_ok else "degraded"
     return {
-        "status": "healthy" if pg_status == "connected" else "degraded",
-        "postgres": pg_status,
-        "neo4j": neo4j_status,
+        "status": status,
+        "postgres": "connected" if pg_ok else "disconnected",
+        "neo4j": "connected" if neo4j_ok else "disconnected",
         "cache_size": len(query_cache),
     }
 
 
-@app.get("/documents", response_model=list[DocumentInfo], dependencies=[Depends(verify_api_key)])
+@app.get("/documents")
 def list_documents():
+    from app.auth import verify_api_key
+    from app.models import DocumentInfo
+    from app.database import get_connection, release_connection, db_available
+    from app.graph import get_document_entities
+
+    verify_api_key()
+    if not db_available():
+        raise HTTPException(status_code=503, detail="Database not available")
     conn = get_connection()
     try:
         cur = conn.cursor()
@@ -270,10 +157,30 @@ def list_documents():
         release_connection(conn)
 
 
-@app.post("/upload", response_model=UploadResponse, dependencies=[Depends(verify_api_key)])
+@app.post("/upload")
 async def upload_pdf(file: UploadFile = File(...), force: bool = False):
+    from app.auth import verify_api_key
+    from app.models import UploadResponse
+    from app.database import get_connection, release_connection, db_available
+    from app.config import settings
+    from app.graph import store_entities, delete_document_graph
+    from app.ingestion.pdf_parser import extract_text_from_pdf
+    from app.ingestion.chunker import chunk_text
+    from app.ingestion.embedder import embed_chunks
+    from app.ingestion.entity_extractor import extract_entities
+
+    verify_api_key()
+
+    if not db_available():
+        raise HTTPException(status_code=503, detail="Database not available. Cannot upload documents.")
+
     content = await file.read()
-    validate_file(file, content)
+    if not file.filename.endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only PDF files allowed")
+    if len(content) > settings.MAX_FILE_SIZE:
+        raise HTTPException(status_code=400, detail=f"File too large. Max {settings.MAX_FILE_SIZE // 1024 // 1024}MB")
+    if len(content) == 0:
+        raise HTTPException(status_code=400, detail="Empty file")
 
     if not force:
         conn = get_connection()
@@ -310,7 +217,25 @@ async def upload_pdf(file: UploadFile = File(...), force: bool = False):
         raise HTTPException(status_code=400, detail=f"PDF too large — {len(chunks)} chunks, max {settings.MAX_CHUNKS}")
 
     embeddings = embed_chunks(chunks)
-    inserted = insert_chunks(chunks, embeddings, file.filename)
+
+    conn = get_connection()
+    inserted = 0
+    try:
+        cur = conn.cursor()
+        for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
+            metadata = {"source": file.filename, "chunk_index": i}
+            cur.execute(
+                "INSERT INTO document_sections (content, meta, embedding) VALUES (%s, %s, %s)",
+                (chunk, json.dumps(metadata), embedding),
+            )
+            inserted += 1
+        conn.commit()
+        cur.close()
+    except Exception as e:
+        conn.rollback()
+        raise e
+    finally:
+        release_connection(conn)
 
     entities_data = {"entities": [], "relationships": []}
     try:
@@ -332,8 +257,23 @@ async def upload_pdf(file: UploadFile = File(...), force: bool = False):
     )
 
 
-@app.post("/query", response_model=QueryResponse, dependencies=[Depends(verify_api_key)])
-async def query(request: QueryRequest):
+@app.post("/query")
+async def query_endpoint(request: QueryRequest):
+    from app.auth import verify_api_key
+    from app.models import QueryResponse
+    from app.database import db_available
+    from app.config import settings
+    from app.retrieval.vector_search import vector_search
+    from app.retrieval.bm25_search import bm25_search
+    from app.retrieval.graph_search import graph_retrieve
+    from app.retrieval.hybrid import reciprocal_rank_fusion
+    from app.retrieval.reranker import rerank
+    from app.retrieval.query_classifier import classify_query
+    from app.generation.llm import generate_answer
+    from app.memory.conversation import memory
+
+    verify_api_key()
+
     if not request.question.strip():
         raise HTTPException(status_code=400, detail="Question cannot be empty")
 
@@ -341,8 +281,34 @@ async def query(request: QueryRequest):
     if cache_key in query_cache:
         return QueryResponse(**query_cache[cache_key])
 
+    classification = classify_query(request.question)
+    retrieval_type = classification["type"]
+    logger.info(f"Query classified as: {retrieval_type} ({classification['reason']})")
+
+    all_results = []
+
+    if retrieval_type in ("vector", "hybrid"):
+        vec_results = vector_search(request.question, top_k=settings.VECTOR_TOP_K)
+        all_results.append(vec_results)
+
+    if retrieval_type in ("vector", "hybrid", "graph"):
+        bm25_results = bm25_search(request.question, top_k=settings.BM25_TOP_K)
+        all_results.append(bm25_results)
+
+    if request.use_graph and retrieval_type in ("graph", "hybrid"):
+        graph_results = graph_retrieve(request.question)
+        if graph_results:
+            all_results.append(graph_results)
+
+    if not all_results:
+        vec_results = vector_search(request.question, top_k=request.top_k)
+        all_results.append(vec_results)
+
+    fused = reciprocal_rank_fusion(all_results, k=settings.RRF_K)
+    reranked = rerank(request.question, fused[:20], top_k=request.top_k)
+
     start = time.time()
-    chunks, retrieval_type = retrieve(request.question, request.top_k, request.use_graph)
+    chunks = reranked
     latency_ms = (time.time() - start) * 1000
 
     history = []
@@ -371,22 +337,64 @@ async def query(request: QueryRequest):
     }
     query_cache[cache_key] = result
 
-    log_search_analytics(request.question, retrieval_type, len(chunks), latency_ms)
+    if db_available():
+        try:
+            from app.database import get_connection, release_connection
+            conn = get_connection()
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT INTO search_analytics (question, retrieval_type, chunks_used, latency_ms) VALUES (%s, %s, %s, %s)",
+                (request.question, retrieval_type, len(chunks), latency_ms),
+            )
+            conn.commit()
+            cur.close()
+            release_connection(conn)
+        except Exception:
+            pass
 
     return QueryResponse(**result)
 
 
-@app.post("/evaluate-query", response_model=EvaluatedQueryResponse, dependencies=[Depends(verify_api_key)])
+@app.post("/evaluate-query")
 async def evaluate_query(request: QueryRequest):
+    from app.auth import verify_api_key
+    from app.models import EvaluatedQueryResponse
+    from app.config import settings
+    from app.retrieval.vector_search import vector_search
+    from app.retrieval.bm25_search import bm25_search
+    from app.retrieval.graph_search import graph_retrieve
+    from app.retrieval.hybrid import reciprocal_rank_fusion
+    from app.retrieval.reranker import rerank
+    from app.retrieval.query_classifier import classify_query
+    from app.generation.llm import generate_answer
+    from app.evaluation.ragas import evaluate
+
+    verify_api_key()
+
     if not request.question.strip():
         raise HTTPException(status_code=400, detail="Question cannot be empty")
 
-    chunks, retrieval_type = retrieve(request.question, request.top_k, request.use_graph)
-    answer = generate_answer(request.question, chunks)
+    classification = classify_query(request.question)
+    retrieval_type = classification["type"]
 
+    all_results = []
+    if retrieval_type in ("vector", "hybrid"):
+        all_results.append(vector_search(request.question, top_k=settings.VECTOR_TOP_K))
+    if retrieval_type in ("vector", "hybrid", "graph"):
+        all_results.append(bm25_search(request.question, top_k=settings.BM25_TOP_K))
+    if request.use_graph and retrieval_type in ("graph", "hybrid"):
+        gr = graph_retrieve(request.question)
+        if gr:
+            all_results.append(gr)
+    if not all_results:
+        all_results.append(vector_search(request.question, top_k=request.top_k))
+
+    fused = reciprocal_rank_fusion(all_results, k=settings.RRF_K)
+    chunks = rerank(request.question, fused[:20], top_k=request.top_k)
+
+    answer = generate_answer(request.question, chunks)
     chunks_text = [c["content"] for c in chunks]
     metrics = evaluate(request.question, answer, chunks_text)
-    log_evaluation(request.question, answer, metrics)
 
     return EvaluatedQueryResponse(
         question=request.question,
@@ -397,28 +405,37 @@ async def evaluate_query(request: QueryRequest):
     )
 
 
-@app.post("/memory/{session_id}/clear", dependencies=[Depends(verify_api_key)])
+@app.post("/memory/{session_id}/clear")
 def clear_memory(session_id: str):
+    from app.auth import verify_api_key
+    from app.memory.conversation import memory
+    verify_api_key()
     memory.clear(session_id)
     return {"message": f"Memory cleared for session {session_id}"}
 
 
-@app.post("/cache/clear", dependencies=[Depends(verify_api_key)])
+@app.post("/cache/clear")
 def clear_cache():
+    from app.auth import verify_api_key
+    verify_api_key()
     count = len(query_cache)
     query_cache.clear()
     return {"message": f"Cache cleared. {count} entries removed."}
 
 
-@app.get("/analytics", dependencies=[Depends(verify_api_key)])
+@app.get("/analytics")
 def get_analytics():
+    from app.auth import verify_api_key
+    from app.database import get_connection, release_connection, db_available
+
+    verify_api_key()
+    if not db_available():
+        raise HTTPException(status_code=503, detail="Database not available")
     conn = get_connection()
     try:
         cur = conn.cursor()
         cur.execute("""
             SELECT
-                COUNT(*) as total_queries,
-                AVG(latency_ms) as avg_latency,
                 retrieval_type,
                 COUNT(*) as count
             FROM search_analytics
@@ -427,8 +444,8 @@ def get_analytics():
         rows = cur.fetchall()
         cur.close()
 
-        total = sum(r[3] for r in rows)
-        by_type = {r[2]: {"count": r[3], "percentage": round(r[3] / total * 100, 1) if total else 0} for r in rows}
+        total = sum(r[1] for r in rows)
+        by_type = {r[0]: {"count": r[1], "percentage": round(r[1] / total * 100, 1) if total else 0} for r in rows}
 
         cur = conn.cursor()
         cur.execute("SELECT AVG(latency_ms) FROM search_analytics")

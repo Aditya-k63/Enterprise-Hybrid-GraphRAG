@@ -1,10 +1,10 @@
 import logging
-import numpy as np
 
 logger = logging.getLogger(__name__)
 
 
 def cosine_similarity(a, b) -> float:
+    import numpy as np
     a, b = np.array(a), np.array(b)
     norm_a = np.linalg.norm(a)
     norm_b = np.linalg.norm(b)

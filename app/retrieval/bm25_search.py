@@ -1,12 +1,13 @@
 import logging
-import numpy as np
-from rank_bm25 import BM25Okapi
-from app.database import get_connection, release_connection
 
 logger = logging.getLogger(__name__)
 
 
 def bm25_search(query: str, top_k: int = 10) -> list[dict]:
+    from app.database import get_connection, release_connection
+    import numpy as np
+    from rank_bm25 import BM25Okapi
+
     conn = get_connection()
     try:
         cur = conn.cursor()

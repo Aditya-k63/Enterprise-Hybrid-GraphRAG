@@ -1,12 +1,13 @@
 import logging
-from app.graph import graph_search, get_entity_context
-from app.ingestion.entity_extractor import extract_query_entities
 
 logger = logging.getLogger(__name__)
 
 
 def graph_retrieve(query: str, max_hops: int = 2) -> list[dict]:
     try:
+        from app.graph import graph_search, get_entity_context
+        from app.ingestion.entity_extractor import extract_query_entities
+
         entities = extract_query_entities(query)
         if not entities:
             logger.info("No entities found in query for graph search")
@@ -15,7 +16,6 @@ def graph_retrieve(query: str, max_hops: int = 2) -> list[dict]:
         logger.info(f"Query entities for graph: {entities}")
 
         graph_results = graph_search(entities, max_hops=max_hops)
-
         context_texts = get_entity_context(entities)
 
         seen = set()

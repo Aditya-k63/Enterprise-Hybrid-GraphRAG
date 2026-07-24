@@ -1,11 +1,11 @@
 import logging
 import json
-from groq import Groq
 
 logger = logging.getLogger(__name__)
 
 
 def get_groq():
+    from groq import Groq
     from app.config import settings
     return Groq(api_key=settings.GROQ_API_KEY)
 
