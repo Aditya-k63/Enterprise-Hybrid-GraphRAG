@@ -1,70 +1,66 @@
 # Enterprise Hybrid GraphRAG
 
-A production-grade Retrieval-Augmented Generation system that combines **vector search**, **BM25 keyword search**, and **Neo4j knowledge graph traversal** for accurate, grounded answers from any PDF document.
+Most RAG projects just do vector search. This one combines three retrieval methods — vector search, keyword search, and a knowledge graph — to answer questions that none of those approaches could handle alone.
+
+You upload a PDF. The system extracts text, chunks it, generates embeddings, and stores everything in PostgreSQL with pgvector. It also extracts entities and relationships using an LLM and stores them in a Neo4j knowledge graph. When you ask a question, a query classifier decides which retrieval strategy to use, merges results with Reciprocal Rank Fusion, reranks them with a cross-encoder, and generates a grounded answer with source citations.
 
 ---
 
-## Live Demo
-
-Upload any PDF, ask questions, and get answers grounded in the actual document with source citations. The system automatically extracts entities and relationships into a knowledge graph for multi-hop reasoning.
-
----
-
-## How It Works
+## How it works
 
 ```
 Upload PDF
     ↓
 Text extraction → Semantic chunking → Embedding generation
     ↓                                    ↓
-Store in PostgreSQL (pgvector)    Extract entities → Store in Neo4j
+PostgreSQL (pgvector)            Entity extraction → Neo4j graph
     ↓                                    ↓
 Ask a question
     ↓
-Query classifier determines retrieval strategy:
-├─ Vector: semantic similarity search
-├─ BM25: keyword matching
+Query classifier picks strategy:
+├─ Vector: semantic similarity
 ├─ Graph: entity relationship traversal
+├─ BM25: keyword matching
 └─ Hybrid: combines all three
     ↓
 Reciprocal Rank Fusion merges results
     ↓
 Cross-encoder reranker picks best chunks
     ↓
-LLM generates grounded answer with citations
+LLM generates answer with citations
 ```
 
 ---
 
-## Results
+## What's inside
 
 | Feature | Status |
 |---|---|
-| PDF ingestion | ✅ |
-| Semantic chunking | ✅ |
-| Embedding generation | ✅ |
-| PostgreSQL + pgvector | ✅ |
-| Neo4j knowledge graph | ✅ |
-| BM25 keyword search | ✅ |
-| Hybrid retrieval (RRF) | ✅ |
-| Cross-encoder reranker | ✅ |
-| Query classifier | ✅ |
-| Multi-hop graph traversal | ✅ |
-| LLM answer generation | ✅ |
-| Source citations | ✅ |
-| Conversation memory | ✅ |
-| RAGAS evaluation | ✅ |
-| JWT authentication | ✅ |
-| Rate limiting | ✅ |
-| Redis-free caching | ✅ |
-| Search analytics | ✅ |
-| Docker Compose | ✅ |
-| Tests | ✅ |
-| CI/CD | ✅ |
+| PDF ingestion | Done |
+| Semantic chunking | Done |
+| Embedding generation (all-MiniLM-L6-v2) | Done |
+| PostgreSQL + pgvector | Done |
+| Neo4j knowledge graph | Done |
+| BM25 keyword search | Done |
+| Hybrid retrieval (RRF) | Done |
+| Cross-encoder reranker | Done |
+| Query classifier | Done |
+| Multi-hop graph traversal | Done |
+| LLM generation (Groq / llama-3.1) | Done |
+| Source citations | Done |
+| Conversation memory | Done |
+| RAGAS evaluation | Done |
+| API key authentication | Done |
+| Rate limiting | Done |
+| Query caching | Done |
+| Search analytics | Done |
+| Docker Compose | Done |
+| Tests | Done |
+| CI/CD (GitHub Actions) | Done |
 
 ---
 
-## Tech Stack
+## Tech stack
 
 | Layer | Tool |
 |---|---|
@@ -74,44 +70,45 @@ LLM generates grounded answer with citations
 | Reranker | Cross-encoder (ms-marco-MiniLM-L-6-v2) |
 | LLM | Groq (llama-3.1-8b-instant) |
 | Backend | FastAPI |
-| Frontend | Streamlit + Built-in HTML UI |
+| Frontend | Streamlit + built-in HTML UI |
 | Containerization | Docker Compose |
 
 ---
 
-## Project Structure
+## Project structure
 
 ```
 Enterprise-Hybrid-GraphRAG/
 ├── app/
-│   ├── main.py              # FastAPI app + routes
-│   ├── config.py            # Settings
-│   ├── database.py          # PostgreSQL connection pool
-│   ├── graph.py             # Neo4j operations
-│   ├── auth.py              # API key auth + rate limiting
-│   ├── models.py            # Pydantic schemas
+│   ├── main.py                  # FastAPI app + all routes
+│   ├── config.py                # Environment settings
+│   ├── database.py              # PostgreSQL connection pool
+│   ├── graph.py                 # Neo4j operations
+│   ├── auth.py                  # API key auth + rate limiting
+│   ├── models.py                # Pydantic schemas
 │   ├── ingestion/
-│   │   ├── pdf_parser.py    # PDF text extraction
-│   │   ├── chunker.py       # Semantic chunking
-│   │   ├── embedder.py      # Embedding generation
-│   │   └── entity_extractor.py  # NER via LLM
+│   │   ├── pdf_parser.py        # PDF text extraction
+│   │   ├── chunker.py           # Semantic chunking
+│   │   ├── embedder.py          # Embedding generation
+│   │   └── entity_extractor.py  # LLM-based NER
 │   ├── retrieval/
-│   │   ├── vector_search.py │   │   ├── bm25_search.py
-│   │   ├── graph_search.py  # Neo4j traversal
-│   │   ├── hybrid.py        # Reciprocal rank fusion
-│   │   ├── reranker.py      # Cross-encoder reranking
-│   │   └── query_classifier.py
+│   │   ├── vector_search.py     # pgvector semantic search
+│   │   ├── bm25_search.py       # BM25 keyword search
+│   │   ├── graph_search.py      # Neo4j traversal
+│   │   ├── hybrid.py            # Reciprocal rank fusion
+│   │   ├── reranker.py          # Cross-encoder reranking
+│   │   └── query_classifier.py  # Routes queries to retrieval type
 │   ├── generation/
-│   │   └── llm.py           # Groq LLM integration
+│   │   └── llm.py               # Groq LLM integration
 │   ├── memory/
-│   │   └── conversation.py  # Session-based chat memory
+│   │   └── conversation.py      # Session-based chat history
 │   └── evaluation/
-│       └── ragas.py         # Faithfulness, relevance, precision
+│       └── ragas.py             # Faithfulness, relevance, precision
 ├── tests/
 ├── frontend/
-│   └── app.py               # Streamlit UI
+│   └── app.py                   # Streamlit UI
 ├── static/
-│   └── index.html           # Built-in web UI
+│   └── index.html               # Built-in web UI
 ├── docker-compose.yml
 ├── Dockerfile
 ├── requirements.txt
@@ -121,16 +118,16 @@ Enterprise-Hybrid-GraphRAG/
 
 ---
 
-## Getting Started
+## Getting started
 
 ### Prerequisites
 
 - Python 3.11+
-- PostgreSQL 14+ with pgvector
+- PostgreSQL with pgvector extension
 - Neo4j 5+
-- Groq API key (free at [console.groq.com](https://console.groq.com))
+- Groq API key (free at console.groq.com)
 
-### Quick Start
+### Install
 
 ```bash
 git clone https://github.com/Aditya-k63/Enterprise-Hybrid-GraphRAG.git
@@ -138,11 +135,28 @@ cd Enterprise-Hybrid-GraphRAG
 python -m venv venv
 venv\Scripts\activate
 pip install -r requirements.txt
-cp .env.example .env
-# Edit .env with your credentials
 ```
 
-### Database Setup
+### Configure
+
+Create `.env` in root:
+
+```env
+DB_NAME=graphrag
+DB_USER=postgres
+DB_PASSWORD=your_password
+DB_HOST=localhost
+DB_PORT=5432
+
+NEO4J_URI=bolt://localhost:7687
+NEO4J_USER=neo4j
+NEO4J_PASSWORD=your_neo4j_password
+
+GROQ_API_KEY=your_groq_api_key
+API_KEY=change-me-in-production
+```
+
+### Database setup
 
 **PostgreSQL:**
 ```sql
@@ -150,17 +164,21 @@ CREATE DATABASE graphrag;
 CREATE EXTENSION IF NOT EXISTS vector;
 ```
 
-**Neo4j:** Run `docker run -p 7474:7474 -p 7687:7687 -e NEO4J_AUTH=neo4j/password neo4j:5-community`
+**Neo4j:** Create the instance, constraints are created automatically on first run.
 
-### Run
+### Run locally
 
 ```bash
-# API
+# Terminal 1 — API
 uvicorn app.main:app --reload
 
-# Streamlit (separate terminal)
+# Terminal 2 — Streamlit (optional)
 streamlit run frontend/app.py
 ```
+
+- API docs: http://localhost:8000/docs
+- Streamlit UI: http://localhost:8501
+- Built-in UI: http://localhost:8000
 
 ### Docker Compose
 
@@ -168,49 +186,86 @@ streamlit run frontend/app.py
 docker-compose up --build
 ```
 
+This starts Neo4j, the API, and Streamlit together.
+
 ---
 
-## API Reference
+## API endpoints
+
+All endpoints except `/` and `/health` require `X-API-Key` header.
 
 | Method | Endpoint | Description |
 |---|---|---|
 | GET | `/` | Web UI |
-| GET | `/health` | System health check |
+| GET | `/health` | System status |
 | GET | `/documents` | List ingested PDFs |
-| POST | `/upload` | Upload PDF (max 10MB) |
+| POST | `/upload` | Upload PDF |
 | POST | `/query` | Ask a question |
 | POST | `/evaluate-query` | Ask + get quality scores |
 | GET | `/analytics` | Search analytics |
-| POST | `/memory/{session_id}/clear` | Clear conversation memory |
+| POST | `/memory/{id}/clear` | Clear session memory |
 | POST | `/cache/clear` | Clear query cache |
 
-All endpoints except `/` and `/health` require `X-API-Key` header.
+---
+
+## How retrieval works
+
+Most RAG projects do one thing: vector search. That works until someone asks "Who founded the company that acquired X?" — vector search can't follow that chain.
+
+This system runs up to three searches in parallel:
+
+1. **Vector search** — finds chunks with similar meaning (pgvector cosine similarity)
+2. **BM25 search** — finds chunks with matching keywords, names, dates
+3. **Graph traversal** — follows entity relationships in Neo4j (Person → founded → Company → acquired → Company)
+
+Results are merged using Reciprocal Rank Fusion, which combines rankings from different sources into a single score. Then a cross-encoder reranker looks at each (question, chunk) pair and picks the best ones.
+
+A query classifier decides which searches to run — simple questions skip the graph, entity-heavy questions prioritize it.
 
 ---
 
 ## Evaluation
 
-The system evaluates every `/evaluate-query` response on three metrics:
+Every `/evaluate-query` response includes:
 
-- **Faithfulness** (0-1): Is the answer grounded in the retrieved chunks?
-- **Answer Relevance** (0-1): Does it actually answer the question?
-- **Context Precision** (0-1): Were the retrieved chunks useful?
+- **Faithfulness** — is the answer grounded in the retrieved chunks?
+- **Answer relevance** — does it actually answer the question?
+- **Context precision** — were the retrieved chunks useful?
 
-Results are logged to PostgreSQL for tracking over time.
-
----
-
-## Architecture Decisions
-
-**Why hybrid retrieval?**
-Vector search catches semantic meaning. BM25 catches exact keywords, names, and dates. Graph traversal catches entity relationships that neither vector nor BM25 can find. Combining all three with RRF gives the best of each world.
-
-**Why Neo4j?**
-Knowledge graphs store explicit relationships between entities. When someone asks "Who founded the company that acquired X?", the graph can traverse: X → acquired_by → Company → founded_by → Person. Vector search alone can't do this reliably.
-
-**Why query classification?**
-Not every query needs graph traversal. "What is machine learning?" is a vector search question. "How does Company A relate to Company B?" needs the graph. Classifying first saves latency and improves accuracy.
+Scores are logged to PostgreSQL for tracking over time.
 
 ---
 
-> Built by [Aditya Kumar](https://github.com/Aditya-k63) as part of an ML portfolio project.
+## Tests
+
+```bash
+python -m pytest tests/ -v
+```
+
+Covers API endpoints, ingestion pipeline, and retrieval fusion logic.
+
+---
+
+## CI/CD
+
+GitHub Actions workflow:
+1. Runs tests on every push
+2. Builds Docker image
+3. Pushes to Docker Hub as `yourusername/graphrag:latest`
+
+---
+
+## Why hybrid?
+
+| Question type | Vector alone | Graph alone | Hybrid |
+|---|---|---|---|
+| "What is machine learning?" | Works | Fails | Works |
+| "Who founded Google?" | Might miss | Works | Works |
+| "How did Company A's acquisition affect Company B?" | Fails | Works | Works |
+| "Explain quantum entanglement" | Works | Fails | Works |
+
+Hybrid covers all cases. The query classifier picks the right strategy automatically.
+
+---
+
+> Built by [Aditya Kumar](https://github.com/Aditya-k63)
