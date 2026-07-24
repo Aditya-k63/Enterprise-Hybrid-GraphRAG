@@ -51,7 +51,7 @@ async def lifespan(app: FastAPI):
     try:
         init_graph()
     except Exception as e:
-        logger.error(f"Neo4j init failed: {e}")
+        logger.error(f"Neo4j init failed (graph features disabled): {e}")
     yield
     logger.info("Shutting down")
 

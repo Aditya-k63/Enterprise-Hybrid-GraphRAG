@@ -8,13 +8,19 @@ _driver = None
 def get_driver():
     global _driver
     if _driver is None:
-        from neo4j import GraphDatabase
-        from app.config import settings
-        _driver = GraphDatabase.driver(
-            settings.NEO4J_URI,
-            auth=(settings.NEO4J_USER, settings.NEO4J_PASSWORD),
-        )
-        logger.info("Neo4j driver created")
+        try:
+            from neo4j import GraphDatabase
+            from app.config import settings
+            _driver = GraphDatabase.driver(
+                settings.NEO4J_URI,
+                auth=(settings.NEO4J_USER, settings.NEO4J_PASSWORD),
+            )
+            _driver.verify_connectivity()
+            logger.info("Neo4j driver created")
+        except Exception as e:
+            logger.error(f"Neo4j connection failed: {e}")
+            _driver = None
+            raise
     return _driver
 
 
