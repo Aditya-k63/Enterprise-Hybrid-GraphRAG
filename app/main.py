@@ -116,13 +116,13 @@ def health():
 
 
 @app.get("/documents")
-def list_documents():
-    from app.auth import verify_api_key
+def list_documents(request: Request):
+    from app.auth import check_api_key
     from app.models import DocumentInfo
     from app.database import get_connection, release_connection, db_available
     from app.graph import get_document_entities
 
-    verify_api_key()
+    check_api_key(request)
     if not db_available():
         raise HTTPException(status_code=503, detail="Database not available")
     conn = get_connection()
@@ -158,8 +158,8 @@ def list_documents():
 
 
 @app.post("/upload")
-async def upload_pdf(file: UploadFile = File(...), force: bool = False):
-    from app.auth import verify_api_key
+async def upload_pdf(request: Request, file: UploadFile = File(...), force: bool = False):
+    from app.auth import check_api_key
     from app.models import UploadResponse
     from app.database import get_connection, release_connection, db_available
     from app.config import settings
@@ -169,10 +169,7 @@ async def upload_pdf(file: UploadFile = File(...), force: bool = False):
     from app.ingestion.embedder import embed_chunks
     from app.ingestion.entity_extractor import extract_entities
 
-    verify_api_key()
-
-    if not db_available():
-        raise HTTPException(status_code=503, detail="Database not available. Cannot upload documents.")
+    check_api_key(request)
 
     content = await file.read()
     if not file.filename.endswith(".pdf"):
@@ -181,6 +178,9 @@ async def upload_pdf(file: UploadFile = File(...), force: bool = False):
         raise HTTPException(status_code=400, detail=f"File too large. Max {settings.MAX_FILE_SIZE // 1024 // 1024}MB")
     if len(content) == 0:
         raise HTTPException(status_code=400, detail="Empty file")
+
+    if not db_available():
+        raise HTTPException(status_code=503, detail="Database not available. Cannot upload documents.")
 
     if not force:
         conn = get_connection()
@@ -258,8 +258,8 @@ async def upload_pdf(file: UploadFile = File(...), force: bool = False):
 
 
 @app.post("/query")
-async def query_endpoint(request: QueryRequest):
-    from app.auth import verify_api_key
+async def query_endpoint(request: QueryRequest, raw_request: Request):
+    from app.auth import check_api_key
     from app.models import QueryResponse
     from app.database import db_available
     from app.config import settings
@@ -272,7 +272,7 @@ async def query_endpoint(request: QueryRequest):
     from app.generation.llm import generate_answer
     from app.memory.conversation import memory
 
-    verify_api_key()
+    check_api_key(raw_request)
 
     if not request.question.strip():
         raise HTTPException(status_code=400, detail="Question cannot be empty")
@@ -356,8 +356,8 @@ async def query_endpoint(request: QueryRequest):
 
 
 @app.post("/evaluate-query")
-async def evaluate_query(request: QueryRequest):
-    from app.auth import verify_api_key
+async def evaluate_query(request: QueryRequest, raw_request: Request):
+    from app.auth import check_api_key
     from app.models import EvaluatedQueryResponse
     from app.config import settings
     from app.retrieval.vector_search import vector_search
@@ -369,7 +369,7 @@ async def evaluate_query(request: QueryRequest):
     from app.generation.llm import generate_answer
     from app.evaluation.ragas import evaluate
 
-    verify_api_key()
+    check_api_key(raw_request)
 
     if not request.question.strip():
         raise HTTPException(status_code=400, detail="Question cannot be empty")
@@ -406,29 +406,29 @@ async def evaluate_query(request: QueryRequest):
 
 
 @app.post("/memory/{session_id}/clear")
-def clear_memory(session_id: str):
-    from app.auth import verify_api_key
+def clear_memory(session_id: str, request: Request):
+    from app.auth import check_api_key
     from app.memory.conversation import memory
-    verify_api_key()
+    check_api_key(request)
     memory.clear(session_id)
     return {"message": f"Memory cleared for session {session_id}"}
 
 
 @app.post("/cache/clear")
-def clear_cache():
-    from app.auth import verify_api_key
-    verify_api_key()
+def clear_cache(request: Request):
+    from app.auth import check_api_key
+    check_api_key(request)
     count = len(query_cache)
     query_cache.clear()
     return {"message": f"Cache cleared. {count} entries removed."}
 
 
 @app.get("/analytics")
-def get_analytics():
-    from app.auth import verify_api_key
+def get_analytics(request: Request):
+    from app.auth import check_api_key
     from app.database import get_connection, release_connection, db_available
 
-    verify_api_key()
+    check_api_key(request)
     if not db_available():
         raise HTTPException(status_code=503, detail="Database not available")
     conn = get_connection()

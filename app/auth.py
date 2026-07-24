@@ -2,7 +2,7 @@ import time
 import hashlib
 import hmac
 from datetime import datetime, timedelta
-from fastapi import HTTPException, Security
+from fastapi import HTTPException, Request, Security
 from fastapi.security import APIKeyHeader
 from app.config import settings
 
@@ -10,6 +10,16 @@ api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 
 def verify_api_key(key: str = Security(api_key_header)):
+    if not key or not hmac.compare_digest(key, settings.API_KEY):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or missing API key. Pass it as header: X-API-Key",
+        )
+    return key
+
+
+def check_api_key(request: Request):
+    key = request.headers.get("X-API-Key", "")
     if not key or not hmac.compare_digest(key, settings.API_KEY):
         raise HTTPException(
             status_code=401,
