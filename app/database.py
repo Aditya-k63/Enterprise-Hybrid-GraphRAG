@@ -5,21 +5,26 @@ logger = logging.getLogger(__name__)
 _connection_pool = None
 
 
+def _get_conn_kwargs():
+    from app.config import settings
+    return {
+        "dbname": settings.DB_NAME,
+        "user": settings.DB_USER,
+        "password": settings.DB_PASSWORD,
+        "host": settings.DB_HOST,
+        "port": settings.DB_PORT,
+        "sslmode": "require",
+    }
+
+
 def get_pool():
     global _connection_pool
     if _connection_pool is None:
         from psycopg2 import pool
-        from pgvector.psycopg2 import register_vector
-        from app.config import settings
         _connection_pool = pool.ThreadedConnectionPool(
             minconn=2,
             maxconn=5,
-            dbname=settings.DB_NAME,
-            user=settings.DB_USER,
-            password=settings.DB_PASSWORD,
-            host=settings.DB_HOST,
-            port=settings.DB_PORT,
-            sslmode="require",
+            **_get_conn_kwargs(),
         )
         logger.info("PostgreSQL connection pool created")
     return _connection_pool
